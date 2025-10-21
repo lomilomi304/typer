@@ -10,6 +10,7 @@ import random
 import csv
 import curses
 import unicodedata
+import argparse  # Import the argparse library
 from datetime import datetime
 from pathlib import Path
 
@@ -67,8 +68,10 @@ class RewardConfig:
 
 
 class TyperacerGame:
-    def __init__(self):
-        self.quotes_dir = Path("quotes")
+    def __init__(self, quote_pack="quotes"):
+        """Initialize the game with a specific quote pack (directory)."""
+        self.quotes_dir = Path(quote_pack)
+        self.quote_pack_name = quote_pack
         self.stats_file = Path("typing_stats.csv")
         self.quote = ""
         self.quote_metadata = ""
@@ -105,7 +108,7 @@ class TyperacerGame:
         if not self.stats_file.exists():
             with open(self.stats_file, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['timestamp', 'date', 'time', 'wpm', 'accuracy', 'errors', 'duration_seconds', 'tier'])
+                writer.writerow(['timestamp', 'date', 'time', 'wpm', 'errors', 'duration_seconds', 'tier', 'pack'])
     
     def calculate_tier(self, wpm, errors):
         """Determine the reward tier based on performance"""
@@ -132,10 +135,10 @@ class TyperacerGame:
                 now.strftime('%Y-%m-%d'),
                 now.strftime('%H:%M:%S'),
                 wpm,
-                100.0,  # Always 100% accuracy now
                 self.errors,
                 round(elapsed_time, 2),
-                tier
+                tier,
+                self.quote_pack_name
             ])
     
     def get_historical_stats(self):
@@ -196,7 +199,7 @@ class TyperacerGame:
     def load_quotes(self):
         quote_files = list(self.quotes_dir.glob("*.txt"))
         if not quote_files:
-            raise FileNotFoundError("No quote files found in quotes directory")
+            raise FileNotFoundError(f"No quote files found in '{self.quotes_dir}' directory")
         
         selected_file = random.choice(quote_files)
         lines = selected_file.read_text().strip().split('\n')
@@ -514,10 +517,10 @@ class CursesUI:
         time.sleep(2)
 
 
-def main_curses(stdscr):
+def main_curses(stdscr, quote_pack):
     """Main game loop with curses"""
     ui = CursesUI(stdscr)
-    game = TyperacerGame()
+    game = TyperacerGame(quote_pack=quote_pack)
     
     try:
         ui.render_welcome_screen(game)
@@ -551,10 +554,6 @@ def main_curses(stdscr):
                 
                 # MODIFICATION: Added shortcut to end the typing phase
                 elif ch == 24: # CTRL+X shortcut
-                    # This ends the round, calculating stats based on progress.
-                    # CTRL+. was requested, but it's not a standard key code.
-                    # CTRL+X (ASCII 24) is a reliable alternative.
-                    # To use a different key, change the value '24'.
                     if game.start_time is None:
                         game.start_time = time.time() # Ensure timer has started
                     break # Exit the typing loop
@@ -570,7 +569,6 @@ def main_curses(stdscr):
                     # Track errors even if they'll be corrected
                     current_pos = len(game.typed_text) - 1
                     if current_pos < len(game.quote):
-                        # Normalize for comparison
                         typed_normalized = game.normalize_accents(game.typed_text[current_pos])
                         quote_normalized = game.normalize_accents(game.quote[current_pos])
                         if typed_normalized != quote_normalized:
@@ -587,7 +585,6 @@ def main_curses(stdscr):
             # Quote completed (or shortcut was used)
             game.end_time = time.time()
             
-            # This check handles the case where the shortcut was used before any typing
             if game.start_time is None:
                 final_wpm = 0.0
                 elapsed_time = 0.0
@@ -615,8 +612,23 @@ def main_curses(stdscr):
 
 def main():
     """Main entry point"""
+    # Set up the argument parser to handle command-line options
+    parser = argparse.ArgumentParser(description="Typeracer CLI - A minimal typing speed game.")
+    parser.add_argument(
+        "-p", "--pack",
+        default="quotes",
+        help="Specify the quote pack (subfolder name) to use. Defaults to 'quotes'."
+    )
+    args = parser.parse_args()
+
     try:
-        curses.wrapper(main_curses)
+        # Use a lambda to pass the selected pack name to the main curses function
+        curses.wrapper(lambda stdscr: main_curses(stdscr, args.pack))
+    except FileNotFoundError as e:
+        # Provide a user-friendly error if the quote pack directory is missing
+        print(f"\nError: {e}", file=sys.stderr)
+        print(f"Please make sure the '{args.pack}' subfolder exists and contains .txt files.", file=sys.stderr)
+        return 1
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)
         return 1
